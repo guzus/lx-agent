@@ -248,20 +248,31 @@ func handleTelegramCommand(ctx context.Context, cfg config, client *canvas.Clien
 	case "/courses":
 		return botResponse{Text: cmdCourses(ctx, cfg, client, args, lang)}
 	case "/assignments":
-		if len(args) == 0 {
-			resp, err := cmdAssignmentsSelector(ctx, cfg, client, 10, lang)
-			if err != nil {
-				return botResponse{Text: msg(lang, "오류: ", "Error: ") + err.Error()}
+		if len(args) > 0 {
+			if _, err := strconv.Atoi(args[0]); err == nil {
+				return botResponse{Text: msg(lang, "course_id 직접 입력은 더 이상 필요하지 않습니다. /assignments 를 눌러 강의를 선택하세요.", "Typing course_id is no longer needed. Use /assignments and pick a course.")}
 			}
-			return resp
 		}
-		return botResponse{Text: cmdAssignments(ctx, client, args, lang)}
+		resp, err := cmdAssignmentsSelector(ctx, cfg, client, 10, lang)
+		if err != nil {
+			return botResponse{Text: msg(lang, "오류: ", "Error: ") + err.Error()}
+		}
+		return resp
 	case "/upcoming":
 		return botResponse{Text: cmdUpcoming(ctx, cfg, client, args, lang)}
 	case "/announcements":
 		return botResponse{Text: cmdAnnouncements(ctx, cfg, client, args, lang)}
 	case "/files":
-		return botResponse{Text: cmdFiles(ctx, client, args, lang)}
+		if len(args) > 0 {
+			if _, err := strconv.Atoi(args[0]); err == nil {
+				return botResponse{Text: msg(lang, "course_id 직접 입력은 더 이상 필요하지 않습니다. /files 를 눌러 강의를 선택하세요.", "Typing course_id is no longer needed. Use /files and pick a course.")}
+			}
+		}
+		resp, err := cmdFilesSelector(ctx, cfg, client, 10, lang)
+		if err != nil {
+			return botResponse{Text: msg(lang, "오류: ", "Error: ") + err.Error()}
+		}
+		return resp
 	default:
 		return botResponse{Text: msg(lang, "알 수 없는 명령어입니다. /help 를 사용하세요.", "Unknown command. Use /help.")}
 	}
@@ -298,6 +309,22 @@ func handleTelegramCallback(ctx context.Context, cfg config, client *canvas.Clie
 		return botResponse{Text: cmdAssignmentsByID(ctx, client, courseID, limit, lang)}
 	}
 
+	if strings.HasPrefix(data, "fil:") {
+		parts := strings.Split(data, ":")
+		if len(parts) != 3 {
+			return botResponse{Text: msg(lang, "잘못된 선택 데이터입니다.", "Invalid selection payload.")}
+		}
+		courseID, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return botResponse{Text: msg(lang, "강의 ID가 잘못되었습니다.", "Invalid course ID.")}
+		}
+		limit, err := strconv.Atoi(parts[2])
+		if err != nil || limit <= 0 {
+			limit = 10
+		}
+		return botResponse{Text: cmdFilesByID(ctx, client, courseID, limit, lang)}
+	}
+
 	return botResponse{Text: msg(lang, "지원하지 않는 동작입니다.", "Unsupported action.")}
 }
 
@@ -323,6 +350,30 @@ func cmdAssignmentsSelector(ctx context.Context, cfg config, client *canvas.Clie
 	}
 
 	return botResponse{Text: msg(lang, "과제를 볼 강의를 선택하세요.", "Select a course to view assignments."), Keyboard: kb}, nil
+}
+
+func cmdFilesSelector(ctx context.Context, cfg config, client *canvas.Client, limit int, lang string) (botResponse, error) {
+	courses, err := monitoredCourses(ctx, cfg, client)
+	if err != nil {
+		return botResponse{}, err
+	}
+	if len(courses) == 0 {
+		return botResponse{Text: msg(lang, "강의가 없습니다.", "No courses found.")}, nil
+	}
+
+	kb := &telegramInlineMarkup{}
+	for _, c := range courses {
+		label := c.Name
+		if len([]rune(label)) > 48 {
+			label = string([]rune(label)[:48]) + "..."
+		}
+		kb.InlineKeyboard = append(kb.InlineKeyboard, []telegramInlineButton{{
+			Text:         label,
+			CallbackData: fmt.Sprintf("fil:%d:%d", c.ID, limit),
+		}})
+	}
+
+	return botResponse{Text: msg(lang, "파일을 볼 강의를 선택하세요.", "Select a course to view files."), Keyboard: kb}, nil
 }
 
 func cmdCourses(ctx context.Context, cfg config, client *canvas.Client, args []string, lang string) string {
@@ -551,23 +602,12 @@ func cmdAnnouncements(ctx context.Context, cfg config, client *canvas.Client, ar
 	return trimForTelegram(strings.Join(lines, "\n"))
 }
 
-func cmdFiles(ctx context.Context, client *canvas.Client, args []string, lang string) string {
-	if len(args) == 0 {
-		return msg(lang, "사용법: /files <course_id> [limit]", "Usage: /files <course_id> [limit]")
-	}
-	courseID, err := strconv.Atoi(args[0])
-	if err != nil {
-		return msg(lang, "잘못된 course_id 입니다.", "Invalid course_id.")
-	}
-
-	limit := 10
-	if len(args) > 1 {
-		if v, err := strconv.Atoi(args[1]); err == nil && v > 0 {
-			limit = v
-		}
-	}
+func cmdFilesByID(ctx context.Context, client *canvas.Client, courseID, limit int, lang string) string {
 	if limit > 30 {
 		limit = 30
+	}
+	if limit <= 0 {
+		limit = 10
 	}
 
 	files, err := client.GetFiles(ctx, courseID)
@@ -623,11 +663,10 @@ func botHelpMessage(lang string) string {
 			"/status",
 			"/settings",
 			"/courses [keyword]",
-			"/assignments <course_id> [limit]",
-			"/assignments (shows course selector)",
+			"/assignments (interactive course selector)",
 			"/upcoming [days] [limit]",
 			"/announcements [limit]",
-			"/files <course_id> [limit]",
+			"/files (interactive course selector)",
 			"/bind",
 		}, "\n")
 	}
@@ -636,11 +675,10 @@ func botHelpMessage(lang string) string {
 		"/status",
 		"/settings",
 		"/courses [키워드]",
-		"/assignments <course_id> [limit]",
-		"/assignments (강의 선택기 표시)",
+		"/assignments (강의 선택기)",
 		"/upcoming [days] [limit]",
 		"/announcements [limit]",
-		"/files <course_id> [limit]",
+		"/files (강의 선택기)",
 		"/bind",
 	}, "\n")
 }

@@ -97,11 +97,10 @@ lx-agent serve
 - `/status`
 - `/settings` (default language is Korean; switch to English)
 - `/courses [keyword]`
-- `/assignments` (show course selector UI)
-- `/assignments <course_id> [limit]`
+- `/assignments` (interactive course selector)
 - `/upcoming [days] [limit]`
 - `/announcements [limit]`
-- `/files <course_id> [limit]`
+- `/files` (interactive course selector)
 - `/bind`
 
 ## Configuration

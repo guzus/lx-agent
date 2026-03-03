@@ -1,0 +1,29 @@
+FROM oven/bun:1.2.23 AS builder
+WORKDIR /app
+
+COPY package.json bun.lock ./
+COPY tsconfig.base.json ./
+COPY apps/admin-backend/package.json apps/admin-backend/package.json
+COPY apps/admin-backend/tsconfig.json apps/admin-backend/tsconfig.json
+COPY apps/admin-backend/src apps/admin-backend/src
+COPY apps/admin-backend/data apps/admin-backend/data
+COPY apps/admin-frontend/package.json apps/admin-frontend/package.json
+COPY apps/admin-frontend/tsconfig.json apps/admin-frontend/tsconfig.json
+COPY apps/admin-frontend/vite.config.ts apps/admin-frontend/vite.config.ts
+COPY apps/admin-frontend/index.html apps/admin-frontend/index.html
+COPY apps/admin-frontend/src apps/admin-frontend/src
+
+RUN bun install --frozen-lockfile
+RUN bun run admin:build
+
+FROM oven/bun:1.2.23
+WORKDIR /app
+
+COPY --from=builder /app/apps/admin-backend/dist /app/apps/admin-backend/dist
+COPY --from=builder /app/apps/admin-backend/data /app/apps/admin-backend/data
+COPY --from=builder /app/apps/admin-frontend/dist /app/apps/admin-frontend/dist
+
+ENV PORT=8787
+EXPOSE 8787
+
+CMD ["bun", "apps/admin-backend/dist/index.js"]

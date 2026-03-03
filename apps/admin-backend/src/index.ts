@@ -1,5 +1,7 @@
 import { hasCodexAccount, loadConfig, saveCodexAccount, saveConfig } from "./config-store";
 import { exchangeCodexCode, startCodexOAuthFlow } from "./oauth";
+import { stat } from "node:fs/promises";
+import { extname, resolve } from "node:path";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -30,7 +32,64 @@ async function parseJson(req: Request): Promise<JsonRecord> {
   }
 }
 
-const port = Number(process.env.ADMIN_BACKEND_PORT || 8787);
+const port = Number(process.env.PORT || process.env.ADMIN_BACKEND_PORT || 8787);
+const frontendDist = resolve(process.cwd(), "apps/admin-frontend/dist");
+
+function contentTypeFor(pathname: string): string | undefined {
+  switch (extname(pathname).toLowerCase()) {
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".js":
+      return "application/javascript; charset=utf-8";
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".svg":
+      return "image/svg+xml";
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".webp":
+      return "image/webp";
+    default:
+      return undefined;
+  }
+}
+
+async function serveFrontend(pathname: string): Promise<Response | null> {
+  if (pathname.startsWith("/api/")) return null;
+
+  let rel = pathname;
+  if (rel === "/" || rel === "") rel = "/index.html";
+  const candidate = resolve(frontendDist, "." + rel);
+  if (!candidate.startsWith(frontendDist)) {
+    return new Response("forbidden", { status: 403 });
+  }
+
+  try {
+    const s = await stat(candidate);
+    if (s.isFile()) {
+      const ct = contentTypeFor(candidate);
+      return new Response(Bun.file(candidate), ct ? { headers: { "Content-Type": ct } } : undefined);
+    }
+  } catch {
+    // Fall through to SPA index fallback.
+  }
+
+  const indexPath = resolve(frontendDist, "index.html");
+  try {
+    const s = await stat(indexPath);
+    if (s.isFile()) {
+      return new Response(Bun.file(indexPath), { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
 
 Bun.serve({
   port,
@@ -101,6 +160,11 @@ Bun.serve({
       } catch (err) {
         return json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 400 }, origin);
       }
+    }
+
+    if (req.method === "GET" || req.method === "HEAD") {
+      const staticResp = await serveFrontend(url.pathname);
+      if (staticResp) return staticResp;
     }
 
     return json({ ok: false, error: "not found" }, { status: 404 }, origin);

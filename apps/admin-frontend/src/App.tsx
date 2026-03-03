@@ -9,7 +9,7 @@ type Config = {
   };
 };
 
-const apiBase = import.meta.env.VITE_ADMIN_BACKEND_URL || "http://localhost:8787";
+const apiBase = import.meta.env.VITE_ADMIN_BACKEND_URL || window.location.origin;
 
 export function App() {
   const [config, setConfig] = useState<Config | null>(null);

@@ -441,7 +441,6 @@ func handleTelegramCallback(ctx context.Context, cfg config, chatID, data, lang 
 		if err != nil || limit <= 0 {
 			limit = 10
 		}
-		_ = addChatCourseSubscription(ctx, cfg, chatID, courseID)
 		return botResponse{Text: cmdAssignmentsByID(ctx, clientForChat, courseID, limit, lang)}
 	}
 
@@ -465,7 +464,6 @@ func handleTelegramCallback(ctx context.Context, cfg config, chatID, data, lang 
 		if err != nil || limit <= 0 {
 			limit = 10
 		}
-		_ = addChatCourseSubscription(ctx, cfg, chatID, courseID)
 		return botResponse{Text: cmdFilesByID(ctx, clientForChat, courseID, limit, lang)}
 	}
 
@@ -603,8 +601,15 @@ func cmdAssignmentsByID(ctx context.Context, client *canvas.Client, courseID, li
 	if err != nil {
 		return msg(lang, "오류: ", "Error: ") + err.Error()
 	}
+	courseName := strconv.Itoa(courseID)
+	if c, err := client.GetCourse(ctx, courseID); err == nil && c != nil && strings.TrimSpace(c.Name) != "" {
+		courseName = c.Name
+	}
 	if len(assignments) == 0 {
-		return msg(lang, "과제가 없습니다.", "No assignments.")
+		if lang == "en" {
+			return fmt.Sprintf("No assignments for %s.", courseName)
+		}
+		return fmt.Sprintf("%s 강의에 과제가 없습니다.", courseName)
 	}
 
 	sort.Slice(assignments, func(i, j int) bool {
@@ -625,9 +630,9 @@ func cmdAssignmentsByID(ctx context.Context, client *canvas.Client, courseID, li
 		assignments = assignments[:limit]
 	}
 
-	header := fmt.Sprintf("Assignments for %d:", courseID)
+	header := fmt.Sprintf("Assignments for %s:", courseName)
 	if lang == "ko" {
-		header = fmt.Sprintf("강의 %d 과제:", courseID)
+		header = fmt.Sprintf("%s 과제:", courseName)
 	}
 	lines := []string{header}
 	for _, a := range assignments {
@@ -780,16 +785,23 @@ func cmdFilesByID(ctx context.Context, client *canvas.Client, courseID, limit in
 	if err != nil {
 		return msg(lang, "오류: ", "Error: ") + err.Error()
 	}
+	courseName := strconv.Itoa(courseID)
+	if c, err := client.GetCourse(ctx, courseID); err == nil && c != nil && strings.TrimSpace(c.Name) != "" {
+		courseName = c.Name
+	}
 	if len(files) == 0 {
-		return msg(lang, "파일이 없습니다.", "No files.")
+		if lang == "en" {
+			return fmt.Sprintf("No files for %s.", courseName)
+		}
+		return fmt.Sprintf("%s 강의에 파일이 없습니다.", courseName)
 	}
 	if len(files) > limit {
 		files = files[:limit]
 	}
 
-	header := fmt.Sprintf("Recent files for %d:", courseID)
+	header := fmt.Sprintf("Recent files for %s:", courseName)
 	if lang == "ko" {
-		header = fmt.Sprintf("강의 %d 최근 파일:", courseID)
+		header = fmt.Sprintf("%s 최근 파일:", courseName)
 	}
 	lines := []string{header}
 	for _, f := range files {

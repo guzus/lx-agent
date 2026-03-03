@@ -501,6 +501,22 @@ func applyEnvOverrides(cfg *config) {
 	if v := strings.TrimSpace(os.Getenv("DATABASE_URL")); v != "" {
 		cfg.Database.URL = v
 	}
+	if v := strings.TrimSpace(os.Getenv("MONITOR_COURSES")); v != "" {
+		parts := strings.Split(v, ",")
+		var ids []int
+		for _, p := range parts {
+			idStr := strings.TrimSpace(p)
+			if idStr == "" {
+				continue
+			}
+			id, err := strconv.Atoi(idStr)
+			if err != nil {
+				exitErr(fmt.Errorf("invalid MONITOR_COURSES value %q: %w", idStr, err))
+			}
+			ids = append(ids, id)
+		}
+		cfg.Monitor.Courses = ids
+	}
 }
 
 func applyDefaults(cfg *config) {

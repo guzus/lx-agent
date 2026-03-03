@@ -3,8 +3,10 @@ package notifier
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 type TelegramNotifier struct {
@@ -18,13 +20,26 @@ func NewTelegram(botToken, chatID string) *TelegramNotifier {
 
 func (t *TelegramNotifier) Send(ctx context.Context, message string) error {
 	u := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.botToken)
-	params := url.Values{
-		"chat_id":    {t.chatID},
-		"text":       {message},
-		"parse_mode": {"Markdown"},
+
+	// Try markdown first for richer formatting.
+	if err := t.send(ctx, u, message, "Markdown"); err == nil {
+		return nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u+"?"+params.Encode(), nil)
+	// Fallback to plain text when Telegram rejects markdown entities.
+	return t.send(ctx, u, message, "")
+}
+
+func (t *TelegramNotifier) send(ctx context.Context, endpoint, message, parseMode string) error {
+	params := url.Values{
+		"chat_id": {t.chatID},
+		"text":    {message},
+	}
+	if parseMode != "" {
+		params.Set("parse_mode", parseMode)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"?"+params.Encode(), nil)
 	if err != nil {
 		return err
 	}
@@ -36,7 +51,8 @@ func (t *TelegramNotifier) Send(ctx context.Context, message string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("telegram error: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("telegram error: %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
 }

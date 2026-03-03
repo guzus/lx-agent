@@ -49,6 +49,13 @@ type ChatRow = {
   last_sent_at: string | null;
 };
 
+type CodexAccount = {
+  access_token: string;
+  refresh_token: string;
+  id_token?: string;
+  expires_at?: number;
+};
+
 type CodexTurn = {
   role: "user" | "assistant";
   content: string;
@@ -74,7 +81,7 @@ function saveConversation(chatId: string, turns: CodexTurn[]): void {
 }
 
 async function chatWithCodex(input: { chatId: string; message: string; lang?: string }): Promise<string> {
-  const account = await loadCodexAccount();
+  const account = await loadCodexAccountPersist();
   if (!account?.access_token) {
     throw new Error("Codex account is not linked. Login with ChatGPT in admin dashboard first.");
   }
@@ -166,6 +173,12 @@ CREATE TABLE IF NOT EXISTS telegram_sent_alerts (
   sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (chat_id, dedupe_key)
 )`);
+      await client.query(`
+CREATE TABLE IF NOT EXISTS admin_codex_accounts (
+  id TEXT PRIMARY KEY,
+  account JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)`);
       await client.query("COMMIT");
       schemaReady = true;
     } catch (err) {
@@ -220,6 +233,63 @@ LEFT JOIN (
 ORDER BY c.chat_id
 `);
   return result.rows;
+}
+
+function normalizeCodexAccount(input: unknown): CodexAccount | null {
+  const parsed = input as Partial<CodexAccount> | null;
+  if (!parsed || typeof parsed.access_token !== "string" || typeof parsed.refresh_token !== "string") {
+    return null;
+  }
+  return {
+    access_token: parsed.access_token,
+    refresh_token: parsed.refresh_token,
+    id_token: typeof parsed.id_token === "string" ? parsed.id_token : undefined,
+    expires_at: typeof parsed.expires_at === "number" ? parsed.expires_at : undefined,
+  };
+}
+
+async function saveCodexAccountPersist(account: CodexAccount): Promise<void> {
+  await saveCodexAccount(account);
+  if (!pool) return;
+
+  await ensureChatSchema();
+  await pool.query(
+    `
+INSERT INTO admin_codex_accounts (id, account, updated_at)
+VALUES ('default', $1::jsonb, NOW())
+ON CONFLICT (id)
+DO UPDATE SET
+  account = EXCLUDED.account,
+  updated_at = NOW()
+`,
+    [JSON.stringify(account)]
+  );
+}
+
+async function loadCodexAccountPersist(): Promise<CodexAccount | null> {
+  if (pool) {
+    await ensureChatSchema();
+    const result = await pool.query<{ account: unknown }>(
+      "SELECT account FROM admin_codex_accounts WHERE id = 'default' LIMIT 1"
+    );
+    if (result.rowCount && result.rows[0]) {
+      const fromDB = normalizeCodexAccount(result.rows[0].account);
+      if (fromDB) return fromDB;
+    }
+  }
+  const fromFile = await loadCodexAccount();
+  return normalizeCodexAccount(fromFile);
+}
+
+async function hasCodexAccountPersist(): Promise<boolean> {
+  if (pool) {
+    await ensureChatSchema();
+    const result = await pool.query<{ exists: boolean }>(
+      "SELECT EXISTS (SELECT 1 FROM admin_codex_accounts WHERE id = 'default') AS exists"
+    );
+    if (result.rows[0]?.exists) return true;
+  }
+  return hasCodexAccount();
 }
 
 function contentTypeFor(pathname: string): string | undefined {
@@ -294,7 +364,7 @@ Bun.serve({
 
     if (url.pathname === "/api/config" && req.method === "GET") {
       const config = await loadConfig();
-      const linked = await hasCodexAccount();
+      const linked = await hasCodexAccountPersist();
       return json({ config, linked }, {}, origin);
     }
 
@@ -345,7 +415,7 @@ Bun.serve({
           state: typeof body.state === "string" ? body.state : undefined,
         });
 
-        await saveCodexAccount(token);
+        await saveCodexAccountPersist(token as CodexAccount);
         const current = await loadConfig();
         await saveConfig({
           ...current,
